@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Book Collector - E-Reader Tool</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="background-decor">
+        <div class="library-depth depth-back"></div>
+        <div class="library-depth depth-mid"></div>
+        <div class="library-depth depth-front"></div>
+        <div class="magic-dust dust-left"></div>
+        <div class="magic-dust dust-right"></div>
+        <div class="glow-orb" id="orb-1"></div>
+        <div class="glow-orb" id="orb-2"></div>
+        <div class="arcane-ring ring-one"></div>
+        <div class="arcane-ring ring-two"></div>
+        <div class="vignette-overlay"></div>
+    </div>
+    
+    <div class="container">
+        <div class="card">
+            <div class="card-aurora"></div>
+            <div class="card-spine"></div>
+            <div class="card-corner card-corner-tl"></div>
+            <div class="card-corner card-corner-br"></div>
+            <!-- Left panel: Control Center -->
+            <div class="panel-left">
+                <div class="header">
+                    <h1>Book <span>Collector</span></h1>
+                    <p>E-Okuyucunuz için Türkçe manga ve kitap kaynaklarını tarayıp doğrudan indirin.</p>
+                </div>
+                
+                <!-- Main Navigation Tabs -->
+                <div class="main-tabs">
+                    <button class="tab-btn active" data-tab="manga">Manga Koleksiyonu</button>
+                    <button class="tab-btn" data-tab="book">Kitap Kitaplığı</button>
+                </div>
+                
+                <!-- Manga Controller -->
+                <div class="tab-content active" id="manga-tab-content">
+                    <div class="sub-tabs">
+                        <button class="sub-tab-btn active" data-subtab="manga-search">Arama Yap</button>
+                        <button class="sub-tab-btn" data-subtab="manga-link">Direkt Bağlantı</button>
+                    </div>
+                    
+                    <div class="sub-content active" id="manga-search-content">
+                        <div class="form-group">
+                            <label for="manga-name">Manga Adı</label>
+                            <input type="text" id="manga-name" placeholder="Örn: One Piece" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="chapter-num">Bölüm Numarası</label>
+                            <input type="text" id="chapter-num" placeholder="Örn: 1183" required>
+                        </div>
+                        <button class="btn action-btn search-btn" id="manga-search-btn">Bölümü Ara ve Bul</button>
+                    </div>
+                    
+                    <div class="sub-content" id="manga-link-content">
+                        <div class="form-group">
+                            <label for="manga-url">Manga Bölüm URL</label>
+                            <input type="url" id="manga-url" placeholder="https://tortugaceviri.com/... veya mangadenizi.net/...">
+                        </div>
+                        <button class="btn action-btn search-btn" id="manga-direct-btn">Doğrula & Devam Et</button>
+                    </div>
+                </div>
+                
+                <!-- Book Controller -->
+                <div class="tab-content" id="book-tab-content">
+                    <div class="form-group">
+                        <label for="book-title">Kitap Adı</label>
+                        <input type="text" id="book-title" placeholder="Örn: İnsancıklar">
+                        <div class="suggestion-box" id="book-suggestions" style="display: none;">
+                            <div class="suggestion-title">Canlı Arama Sonuçları</div>
+                            <div class="suggestion-list" id="book-suggestion-list"></div>
+                        </div>
+                    </div>
+                    <button class="btn action-btn search-btn" id="book-search-btn">Kitaplıklarda Ara</button>
+                </div>
+            </div>
+            
+                <!-- Right panel: Shelf & Preview area -->
+                <div class="panel-right">
+                <div class="shelf-header">
+                    <span class="shelf-title"><span class="shelf-title-book">Raf</span></span>
+                    <span class="shelf-badge" id="shelf-status">Hazır</span>
+                </div>
+                
+                <!-- Empty Shelf State (Visible initially) -->
+                <div class="empty-shelf" id="empty-shelf">
+                    <span class="empty-shelf-icon">📖</span>
+                    <p>Arama sonuçları veya indirme kaynakları burada listelenecektir.</p>
+                </div>
+                
+                <!-- Multi-Select Results Area -->
+                <div class="book-results-area" id="book-results-area" style="display: none;">
+                    <label class="section-label">Arama Sonuçları (Lütfen Seçin):</label>
+                    <p class="search-tip" style="font-size: 0.76rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4; border-left: 2px solid var(--gold); padding-left: 8px;">
+                        💡 <strong>Öneri:</strong> <code>drive.google.com</code> kaynakları doğrudan iner. Diğer siteler güvenlik nedeniyle engellenebilir.
+                    </p>
+                    <div class="results-list" id="results-list">
+                        <!-- Dynamic results -->
+                    </div>
+                </div>
+                
+                <!-- Download Panel -->
+                <div class="verification-area" id="verification-area" style="display: none;">
+                    <div class="found-source-box">
+                        <span class="found-badge">İndirme Kaynağı Seçildi</span>
+                        <div class="source-info">
+                            <p class="source-label">Hedef Bağlantı:</p>
+                            <a href="#" target="_blank" class="source-link" id="verified-link">http://example.com</a>
+                        </div>
+                    </div>
+                    
+                    <!-- Format Selection (Only visible for manga, books auto-select based on source extension) -->
+                    <div class="form-group format-selection-group" id="manga-formats-group">
+                        <label>Çıktı Formatı</label>
+                        <div class="format-options">
+                            <label class="format-card active">
+                                <input type="radio" name="format" value="cbz" checked>
+                                <span class="format-title">CBZ</span>
+                                <span class="format-desc">E-Okuyucular için ideal format</span>
+                            </label>
+                            <label class="format-card">
+                                <input type="radio" name="format" value="pdf">
+                                <span class="format-title">PDF</span>
+                                <span class="format-desc">Standart döküman formatı</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <button class="btn action-btn download-btn" id="download-btn">
+                        <span class="btn-text">Cihaza İndir ve Paketle</span>
+                        <span class="spinner" style="display: none;"></span>
+                    </button>
+                </div>
+                
+                <!-- Status Box -->
+                <div class="status-box" id="status-box" style="display: none;">
+                    <div class="status-icon" id="status-icon">⏳</div>
+                    <div class="status-content">
+                        <div class="status-title" id="status-title">Arama Başlatıldı</div>
+                        <div class="status-message" id="status-message">Kaynak taranıyor...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // State
+            let currentMode = 'manga'; // 'manga' or 'book'
+            let activeSubTab = 'manga-search'; // 'manga-search' or 'manga-link'
+            let selectedUrl = '';
+            let selectedBookFormat = '';
+            
+            // Elements
+            const tabBtns = document.querySelectorAll('.tab-btn');
+            const tabContents = document.querySelectorAll('.tab-content');
+            const subTabBtns = document.querySelectorAll('.sub-tab-btn');
+            const subContents = document.querySelectorAll('.sub-content');
+            
+            const verificationArea = document.getElementById('verification-area');
+            const verifiedLink = document.getElementById('verified-link');
+            const downloadBtn = document.getElementById('download-btn');
+            const mangaFormatsGroup = document.getElementById('manga-formats-group');
+            const bookResultsArea = document.getElementById('book-results-area');
+            const resultsList = document.getElementById('results-list');
+            const emptyShelf = document.getElementById('empty-shelf');
+            const shelfStatus = document.getElementById('shelf-status');
+            const bookTitleInput = document.getElementById('book-title');
+            const bookSuggestions = document.getElementById('book-suggestions');
+            const bookSuggestionList = document.getElementById('book-suggestion-list');
+            
+            const statusBox = document.getElementById('status-box');
+            const statusIcon = document.getElementById('status-icon');
+            const statusTitle = document.getElementById('status-title');
+            const statusMessage = document.getElementById('status-message');
+            
+            const formatCards = document.querySelectorAll('.format-card');
+            let suggestionTimeout;
+            let suggestionRequestId = 0;
+            const suggestionCache = new Map();
+            
+            // Format card toggle active class
+            formatCards.forEach(card => {
+                card.addEventListener('click', () => {
+                    formatCards.forEach(c => c.classList.remove('active'));
+                    card.classList.add('active');
+                });
+            });
+            
+            // Main Tab Switch
+            tabBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    tabBtns.forEach(b => b.classList.remove('active'));
+                    tabContents.forEach(c => c.classList.remove('active'));
+                    
+                    btn.classList.add('active');
+                    currentMode = btn.dataset.tab;
+                    document.getElementById(`${currentMode}-tab-content`).classList.add('active');
+                    
+                    resetVerification();
+                    
+                    // Update format card choices dynamically
+                    const fTitle1 = document.querySelector('.format-card:nth-child(1) .format-title');
+                    const fDesc1 = document.querySelector('.format-card:nth-child(1) .format-desc');
+                    const fInput1 = document.querySelector('.format-card:nth-child(1) input');
+                    const fTitle2 = document.querySelector('.format-card:nth-child(2) .format-title');
+                    const fDesc2 = document.querySelector('.format-card:nth-child(2) .format-desc');
+                    const fInput2 = document.querySelector('.format-card:nth-child(2) input');
+                    
+                    if (currentMode === 'book') {
+                        fTitle1.textContent = 'EPUB';
+                        fDesc1.textContent = 'Kobo/E-Kitap formatı (Çevrilir)';
+                        fInput1.value = 'epub';
+                        fInput1.checked = true;
+                        
+                        fTitle2.textContent = 'PDF';
+                        fDesc2.textContent = 'Orijinal PDF formatı';
+                        fInput2.value = 'pdf';
+                        
+                        document.querySelectorAll('.format-card').forEach(c => c.classList.remove('active'));
+                        document.querySelector('.format-card:nth-child(1)').classList.add('active');
+                    } else {
+                        fTitle1.textContent = 'CBZ';
+                        fDesc1.textContent = 'E-Okuyucular için ideal format';
+                        fInput1.value = 'cbz';
+                        fInput1.checked = true;
+                        
+                        fTitle2.textContent = 'PDF';
+                        fDesc2.textContent = 'Standart döküman formatı';
+                        fInput2.value = 'pdf';
+                        
+                        document.querySelectorAll('.format-card').forEach(c => c.classList.remove('active'));
+                        document.querySelector('.format-card:nth-child(1)').classList.add('active');
+                    }
+                });
+            });
+            
+            // Sub Tab Switch
+            subTabBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    subTabBtns.forEach(b => b.classList.remove('active'));
+                    subContents.forEach(c => c.classList.remove('active'));
+                    
+                    btn.classList.add('active');
+                    activeSubTab = btn.dataset.subtab;
+                    document.getElementById(`${activeSubTab}-content`).classList.add('active');
+                    
+                    resetVerification();
+                });
+            });
+            
+            function showStatus(type, title, msg) {
+                statusBox.style.display = 'flex';
+                statusBox.className = `status-box ${type}`;
+                statusIcon.textContent = type === 'success' ? '✅' : (type === 'error' ? '❌' : '⏳');
+                statusTitle.textContent = title;
+                statusMessage.textContent = msg;
+                
+                // Update shelf badge
+                shelfStatus.textContent = title;
+            }
+            
+            function resetVerification() {
+                verificationArea.style.display = 'none';
+                bookResultsArea.style.display = 'none';
+                statusBox.style.display = 'none';
+                emptyShelf.style.display = 'flex';
+                selectedUrl = '';
+                shelfStatus.textContent = 'Hazır';
+            }
+
+            function hideBookSuggestions() {
+                bookSuggestions.style.display = 'none';
+                bookSuggestionList.innerHTML = '';
+            }
+
+            function guessFormatFromUrl(url) {
+                const lowered = (url || '').toLowerCase();
+                return lowered.includes('.epub') ? 'epub' : 'pdf';
+            }
+
+            function displaySuggestionMatches(matches) {
+                if (!matches.length) {
+                    hideBookSuggestions();
+                    return;
+                }
+
+                bookSuggestionList.innerHTML = '';
+                matches.forEach(item => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'suggestion-item';
+                    button.innerHTML = `
+                        <span class="suggestion-book">${item.title}</span>
+                        <span class="suggestion-author">${item.domain}</span>
+                    `;
+                    button.addEventListener('click', () => {
+                        resolveSuggestionChoice(item);
+                    });
+                    bookSuggestionList.appendChild(button);
+                });
+
+                bookSuggestions.style.display = 'block';
+            }
+
+            function getCachedSuggestionMatches(query) {
+                const normalized = query.trim().toLowerCase();
+                if (!normalized) return [];
+
+                if (suggestionCache.has(normalized)) {
+                    return suggestionCache.get(normalized);
+                }
+
+                for (const [cachedQuery, cachedResults] of suggestionCache.entries()) {
+                    if (cachedQuery.startsWith(normalized) || normalized.startsWith(cachedQuery)) {
+                        const filtered = cachedResults.filter(item =>
+                            item.title.toLowerCase().includes(normalized)
+                        );
+                        if (filtered.length) return filtered;
+                    }
+                }
+
+                return [];
+            }
+
+            function renderBookSearchResults(res) {
+                resultsList.innerHTML = '';
+                res.results.forEach((item, index) => {
+                    const resultCard = document.createElement('div');
+                    resultCard.className = `result-item-card ${index === 0 ? 'selected' : ''}`;
+                    resultCard.innerHTML = `
+                        <div class="result-meta">
+                            <span class="result-format-badge">${item.format.toUpperCase()}</span>
+                            <span class="result-domain">${item.domain}</span>
+                        </div>
+                        <a href="${item.url}" target="_blank" class="result-link-preview">${item.url}</a>
+                    `;
+                    
+                    resultCard.addEventListener('click', () => {
+                        document.querySelectorAll('.result-item-card').forEach(c => c.classList.remove('selected'));
+                        resultCard.classList.add('selected');
+                        selectBook(item.url, item.format);
+                    });
+                    
+                    resultsList.appendChild(resultCard);
+                });
+                
+                selectBook(res.results[0].url, res.results[0].format);
+                bookResultsArea.style.display = 'block';
+                mangaFormatsGroup.style.display = 'block';
+                verificationArea.style.display = 'block';
+            }
+
+            async function resolveSuggestionChoice(item) {
+                hideBookSuggestions();
+                bookTitleInput.value = item.title;
+                resetVerification();
+                emptyShelf.style.display = 'none';
+                renderBookSearchResults({
+                    results: [{
+                        url: item.url,
+                        domain: item.domain,
+                        format: guessFormatFromUrl(item.url)
+                    }]
+                });
+                showStatus('processing', 'Secilen Kaynak Aciliyor', 'Kaynak aninda yerlestirildi, dosya kontrol ediliyor...');
+
+                try {
+                    const response = await fetch('/resolve-book', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url: item.url, title: item.title })
+                    });
+                    const res = await response.json();
+
+                    if (response.ok && res.results && res.results.length) {
+                        renderBookSearchResults(res);
+                        showStatus('success', 'Kaynak Hazir', 'Secilen canli sonuc aninda indirilebilir hale getirildi.');
+                        return;
+                    }
+
+                    triggerBookSearch(item.title);
+                } catch (error) {
+                    console.error('Suggestion resolve failed:', error);
+                    triggerBookSearch(item.title);
+                }
+            }
+
+            function showSuggestionLoading() {
+                bookSuggestionList.innerHTML = `
+                    <div class="suggestion-loading">Canli arama yapiliyor...</div>
+                `;
+                bookSuggestions.style.display = 'block';
+            }
+
+            async function renderBookSuggestions(query) {
+                if (query.length < 2) {
+                    hideBookSuggestions();
+                    return;
+                }
+
+                const currentRequestId = ++suggestionRequestId;
+                const cachedMatches = getCachedSuggestionMatches(query);
+                if (cachedMatches.length) {
+                    displaySuggestionMatches(cachedMatches);
+                } else {
+                    showSuggestionLoading();
+                }
+
+                try {
+                    const response = await fetch('/suggest-books', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ query })
+                    });
+                    const res = await response.json();
+
+                    if (currentRequestId !== suggestionRequestId) {
+                        return;
+                    }
+
+                    const matches = res.results || [];
+                    suggestionCache.set(query.trim().toLowerCase(), matches);
+                    if (!matches.length) {
+                        hideBookSuggestions();
+                        return;
+                    }
+
+                    displaySuggestionMatches(matches);
+                } catch (error) {
+                    hideBookSuggestions();
+                    console.error('Suggestion fetch failed:', error);
+                }
+            }
+            
+            // Manga Search Action
+            document.getElementById('manga-search-btn').addEventListener('click', async () => {
+                const mangaName = document.getElementById('manga-name').value.trim();
+                const chapterNum = document.getElementById('chapter-num').value.trim();
+                
+                if (!mangaName || !chapterNum) {
+                    showStatus('error', 'Eksik Bilgi', 'Manga adı ve bölüm numarası alanlarını doldurunuz.');
+                    return;
+                }
+                
+                resetVerification();
+                showStatus('processing', 'Aranıyor', 'Manga arşivleri taranıyor...');
+                emptyShelf.style.display = 'none';
+                
+                try {
+                    const response = await fetch('/search', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ mode: 'manga', manga_name: mangaName, chapter_num: chapterNum })
+                    });
+                    const res = await response.json();
+                    
+                    if (!response.ok) throw new Error(res.error || 'Arama başarısız oldu.');
+                    
+                    resultsList.innerHTML = '';
+                    res.results.forEach((item, index) => {
+                        const resultCard = document.createElement('div');
+                        resultCard.className = `result-item-card ${index === 0 ? 'selected' : ''}`;
+                        resultCard.innerHTML = `
+                            <div class="result-meta">
+                                <span class="result-format-badge">${item.source}</span>
+                                <span class="result-domain">${item.domain}</span>
+                            </div>
+                            <span class="result-link-preview">${item.url.startsWith('mangadex:') ? '📖 MangaDex açık API üzerinden — Türkçe çeviri' : item.url}</span>
+                        `;
+                        
+                        // Select on click
+                        resultCard.addEventListener('click', () => {
+                            document.querySelectorAll('.result-item-card').forEach(c => c.classList.remove('selected'));
+                            resultCard.classList.add('selected');
+                            selectManga(item.url);
+                        });
+                        
+                        resultsList.appendChild(resultCard);
+                    });
+                    
+                    selectManga(res.results[0].url);
+                    bookResultsArea.style.display = 'block';
+                    
+                    mangaFormatsGroup.style.display = 'block';
+                    verificationArea.style.display = 'block';
+                    showStatus('success', 'Bölüm Bulundu!', 'Tercih ettiğiniz kaynağı seçip indirmeyi başlatabilirsiniz.');
+                } catch (err) {
+                    showStatus('error', 'Arama Hatası', err.message);
+                }
+            });
+            
+            function selectManga(url) {
+                selectedUrl = url;
+                verifiedLink.href = url;
+                verifiedLink.textContent = url;
+            }
+            
+            // Manga Direct Link Verification
+            document.getElementById('manga-direct-btn').addEventListener('click', () => {
+                const url = document.getElementById('manga-url').value.trim();
+                if (!url || !url.startsWith('http')) {
+                    showStatus('error', 'Geçersiz URL', 'Lütfen geçerli bir manga okuma linki girin.');
+                    return;
+                }
+
+                if (url.includes('sadscans.net')) {
+                    resetVerification();
+                    emptyShelf.style.display = 'none';
+                    showStatus('error', 'Kaynak Engelli', 'sadscans.net anti-bot korumasi kullandigi icin bu uygulama icinden otomatik cekilemiyor.');
+                    return;
+                }
+                
+                resetVerification();
+                emptyShelf.style.display = 'none';
+                selectManga(url);
+                
+                mangaFormatsGroup.style.display = 'block';
+                verificationArea.style.display = 'block';
+                showStatus('success', 'Doğrulandı', 'Kaynak bağlantısı hazır. İndirmeyi başlatabilirsiniz.');
+            });
+            
+            bookTitleInput.addEventListener('input', () => {
+                clearTimeout(suggestionTimeout);
+                suggestionTimeout = setTimeout(() => {
+                    renderBookSuggestions(bookTitleInput.value.trim());
+                }, 60);
+            });
+
+            bookTitleInput.addEventListener('focus', () => {
+                renderBookSuggestions(bookTitleInput.value.trim());
+            });
+
+            bookTitleInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    hideBookSuggestions();
+                    const title = bookTitleInput.value.trim();
+                    if (title) {
+                        triggerBookSearch(title);
+                    }
+                }
+            });
+
+            document.addEventListener('click', (event) => {
+                if (!bookSuggestions.contains(event.target) && event.target !== bookTitleInput) {
+                    hideBookSuggestions();
+                }
+            });
+            
+            document.getElementById('book-search-btn').addEventListener('click', () => {
+                const title = bookTitleInput.value.trim();
+                if (!title) {
+                    showStatus('error', 'Eksik Bilgi', 'Lütfen aramak istediğiniz kitap adını girin.');
+                    return;
+                }
+                triggerBookSearch(title);
+            });
+            
+            async function triggerBookSearch(title) {
+                hideBookSuggestions();
+                resetVerification();
+                showStatus('processing', 'Aranıyor', 'E-Kitap arşivleri taranıyor...');
+                emptyShelf.style.display = 'none';
+                
+                try {
+                    const response = await fetch('/search', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ mode: 'book', book_title: title, book_author: '' })
+                    });
+                    const res = await response.json();
+                    
+                    if (!response.ok) throw new Error(res.error || 'Kitap bulunamadı.');
+                    renderBookSearchResults(res);
+                    
+                    if (res.epub_not_found) {
+                        showStatus('success', 'Kitap Bulundu (PDF)', 'Aradığınız kitabın EPUB versiyonu bulunamadı, PDF kaynakları listelendi.');
+                    } else {
+                        showStatus('success', 'Kitap Bulundu (EPUB)', 'EPUB formatındaki kaynaklar öncelikli olarak listelendi.');
+                    }
+                } catch (err) {
+                    showStatus('error', 'Hata', err.message);
+                }
+            }
+            
+            function selectBook(url, format) {
+                selectedUrl = url;
+                selectedBookFormat = format;
+                verifiedLink.href = url;
+                verifiedLink.textContent = url;
+            }
+            
+            // Downloader Logic
+            downloadBtn.addEventListener('click', async () => {
+                if (!selectedUrl) return;
+                
+                const spinner = downloadBtn.querySelector('.spinner');
+                const btnText = downloadBtn.querySelector('.btn-text');
+                const format = document.querySelector('input[name="format"]:checked').value;
+                    
+                downloadBtn.disabled = true;
+                btnText.textContent = 'İndiriliyor...';
+                spinner.style.display = 'inline-block';
+                
+                showStatus('processing', 'İndiriliyor', 'Dosya çekiliyor, lütfen bekleyin...');
+                
+                try {
+                    const response = await fetch('/convert', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            url: selectedUrl, 
+                            format, 
+                            mode: currentMode,
+                            title: document.getElementById('book-title').value.trim() || 'Kitap',
+                            author: ''
+                        })
+                    });
+                    
+                    if (!response.ok) {
+                        const errData = await response.json();
+                        throw new Error(errData.error || 'Dosya indirme hatası.');
+                    }
+                    
+                    // Get filename
+                    let filename = `download.${format}`;
+                    const disposition = response.headers.get('Content-Disposition');
+                    if (disposition && disposition.indexOf('attachment') !== -1) {
+                        const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+                        const matches = filenameRegex.exec(disposition);
+                        if (matches != null && matches[1]) { 
+                            filename = matches[1].replace(/['"]/g, '');
+                        }
+                    }
+                    
+                    const blob = await response.blob();
+                    const blobUrl = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = blobUrl;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(blobUrl);
+                    
+                    showStatus('success', 'İndirildi!', `"${filename}" dosyası başarıyla indirildi.`);
+                } catch (err) {
+                    showStatus('error', 'Hata', err.message);
+                } finally {
+                    downloadBtn.disabled = false;
+                    btnText.textContent = 'Cihaza İndir ve Paketle';
+                    spinner.style.display = 'none';
+                }
+            });
+
+        });
+    </script>
+</body>
+</html>
