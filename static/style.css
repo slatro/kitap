@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
-
 :root {
     --bg-color: #050608;
     --card-bg: rgba(16, 18, 22, 0.88);
@@ -22,25 +20,36 @@
     box-sizing: border-box;
     margin: 0;
     padding: 0;
-    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 body {
     background-color: var(--bg-color);
     color: var(--text-primary);
-    height: 100vh;
+    min-height: 100vh;
+    min-height: 100dvh;
     display: flex;
     justify-content: center;
     align-items: center;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
     position: relative;
     padding: 20px;
     background:
         radial-gradient(circle at 20% 20%, rgba(255, 170, 73, 0.16), transparent 24%),
         radial-gradient(circle at 82% 26%, rgba(108, 151, 255, 0.12), transparent 22%),
-        linear-gradient(rgba(4, 6, 9, 0.7), rgba(8, 9, 11, 0.9)),
-        url('https://images.unsplash.com/photo-1507842217343-583bb7270b66?q=80&w=1920') no-repeat center center fixed;
-    background-size: cover;
+        linear-gradient(180deg, rgba(34, 22, 14, 0.32), rgba(8, 9, 11, 0.92)),
+        repeating-linear-gradient(
+            90deg,
+            rgba(31, 22, 14, 0.88) 0 28px,
+            rgba(73, 49, 28, 0.8) 28px 44px,
+            rgba(23, 17, 12, 0.92) 44px 58px,
+            rgba(92, 67, 42, 0.72) 58px 76px
+        ),
+        linear-gradient(180deg, #0a0b0d 0%, #111216 100%);
+    background-size: auto, auto, auto, auto;
+    background-attachment: scroll;
+    -webkit-text-size-adjust: 100%;
 }
 
 .background-decor {
@@ -326,7 +335,7 @@ body {
 }
 
 .header h1 {
-    font-family: 'Playfair Display', serif;
+    font-family: Georgia, "Times New Roman", serif;
     font-size: 2.3rem;
     font-weight: 700;
     color: #fff9ed;
@@ -582,7 +591,7 @@ input:-webkit-autofill:focus {
 }
 
 .shelf-title-book {
-    font-family: 'Playfair Display', serif;
+    font-family: Georgia, "Times New Roman", serif;
     font-size: 2.3rem;
     font-weight: 700;
     color: #fff9ed;
@@ -903,13 +912,15 @@ input:-webkit-autofill:focus {
 @media (max-width: 850px) {
     body {
         overflow-y: auto;
-        height: auto;
+        min-height: 100dvh;
         padding: 20px 10px;
     }
     .card {
         grid-template-columns: 1fr;
         height: auto;
         min-height: 0;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
     }
     .panel-left {
         border-right: none;
@@ -926,5 +937,33 @@ input:-webkit-autofill:focus {
     .arcane-ring,
     .magic-dust {
         opacity: 0.14;
+    }
+    .glow-orb {
+        display: none;
+    }
+}
+
+@supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+    .card {
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        background:
+            radial-gradient(circle at top left, rgba(255, 219, 164, 0.08), transparent 28%),
+            linear-gradient(145deg, rgba(18, 16, 18, 0.98) 0%, rgba(13, 17, 24, 0.99) 50%, rgba(24, 16, 12, 0.98) 100%);
+    }
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .card {
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        box-shadow:
+            0 22px 48px rgba(0, 0, 0, 0.52),
+            0 0 0 1px rgba(255,255,255,0.04);
+    }
+    .magic-dust,
+    .arcane-ring,
+    .glow-orb {
+        display: none;
     }
 }
