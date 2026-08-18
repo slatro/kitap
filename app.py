@@ -240,35 +240,24 @@ def passes_book_quality_gate(url):
             url,
             headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         )
-        with urllib.request.urlopen(req, timeout=15.0) as resp:
-            data = resp.read()
-
-        if '.pdf' in lowered:
-            if len(data) < 250000:
-                return False
-            try:
-                from pypdf import PdfReader
-                reader = PdfReader(io.BytesIO(data))
-                if len(reader.pages) <= 3:
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            # Check content length header if available
+            cl = resp.headers.get('Content-Length')
+            if cl:
+                size = int(cl)
+                if '.pdf' in lowered and size < 250000:
                     return False
-            except Exception as e:
-                print(f"PDF quality check parse error for {url}: {e}")
-
-        if '.epub' in lowered:
-            if len(data) < 100000:
-                return False
-            try:
-                with zipfile.ZipFile(io.BytesIO(data), 'r') as zf:
-                    chapter_like_files = [
-                        name for name in zf.namelist()
-                        if name.lower().endswith(('.xhtml', '.html', '.htm'))
-                    ]
-                if len(chapter_like_files) <= 3:
+                if '.epub' in lowered and size < 100000:
                     return False
-            except Exception as e:
-                print(f"EPUB quality check parse error for {url}: {e}")
-
-        return True
+                return True
+            
+            # If no Content-Length header, read up to 250KB to check size
+            data = resp.read(250000)
+            if '.pdf' in lowered and len(data) < 250000:
+                return False
+            if '.epub' in lowered and len(data) < 100000:
+                return False
+            return True
     except Exception as e:
         print(f"Quality gate failed for {url}: {e}")
         return not looks_like_preview_url(url)
@@ -497,12 +486,13 @@ def fetch_book_suggestions(query, limit=5):
 def build_book_queries(title, author=None):
     queries = []
     if author:
+        queries.append(f'{title} {author} filetype:epub')
+        queries.append(f'{title} {author} filetype:pdf')
         queries.append(f'{title} {author} türkçe epub pdf')
-    queries.append(f'{title} türkçe epub pdf')
-    if author:
-        queries.append(f'{title} {author} pdf')
-    queries.append(f'{title} pdf')
-    queries.append(f'"{title}" epub pdf')
+    else:
+        queries.append(f'{title} filetype:epub')
+        queries.append(f'{title} filetype:pdf')
+        queries.append(f'{title} türkçe epub pdf')
     return list(dict.fromkeys(queries))
 
 def search_books_for_queries(queries, requested_title):
@@ -515,7 +505,7 @@ def search_books_for_queries(queries, requested_title):
                 url,
                 headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
             )
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
                 html = resp.read().decode('utf-8', errors='ignore')
                 
             links = extract_search_targets(html)
