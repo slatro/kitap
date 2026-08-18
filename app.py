@@ -304,7 +304,11 @@ def score_book_candidate(query, candidate_text):
         return -1
 
     matched_words = sum(1 for token in query_words if token in candidate_token_set)
-    minimum_word_matches = 1 if len(query_words) <= 2 else 2
+    if len(query_words) <= 3:
+        minimum_word_matches = len(query_words)
+    else:
+        minimum_word_matches = len(query_words) - 1
+        
     if query_words and matched_words < minimum_word_matches:
         return -1
 
@@ -323,10 +327,10 @@ def score_book_candidate(query, candidate_text):
 
     return score
 
-def deep_scrape_page(page_url):
+def deep_scrape_page(page_url, query=''):
     # Avoid scraping direct files or known cloud drives
     if any(x in page_url for x in ['drive.google.com', 'yadi.sk', 'disk.yandex', 'mega.nz', 'mediafire.com']) or page_url.endswith('.pdf') or page_url.endswith('.epub'):
-        return {'url': page_url, 'context': page_url}
+        return {'url': page_url, 'context': page_url, 'title': ''}
         
     try:
         req = urllib.request.Request(
@@ -341,20 +345,43 @@ def deep_scrape_page(page_url):
         if title_match:
             page_title = re.sub(r'\s+', ' ', title_match.group(1)).strip()
             
+        query_tokens = tokenize_search_text(query) if query else []
+        candidates = []
+        
         found_links = re.findall(r'href="([^"]+)"', html)
         for link in found_links:
             link = link.strip()
-            # If we find a cloud drive or direct pdf/epub link, return it!
-            if any(x in link for x in ['drive.google.com/file/d/', 'yadi.sk', 'disk.yandex', 'mediafire.com', 'mega.nz']):
-                return {'url': link, 'context': f'{page_url} {page_title} {link}'}
-            if link.endswith('.pdf') or link.endswith('.epub'):
+            is_direct = (
+                any(x in link for x in ['drive.google.com/file/d/', 'yadi.sk', 'disk.yandex', 'mediafire.com', 'mega.nz'])
+                or link.endswith('.pdf')
+                or link.endswith('.epub')
+            )
+            if is_direct:
                 if link.startswith('/'):
                     parsed_base = urllib.parse.urlparse(page_url)
                     link = f"{parsed_base.scheme}://{parsed_base.netloc}{link}"
-                return {'url': link, 'context': f'{page_url} {page_title} {link}'}
+                
+                link_score = 0
+                if query_tokens:
+                    link_norm = normalize_search_text(link)
+                    link_score = sum(1 for token in query_tokens if token in link_norm)
+                
+                candidates.append((link, link_score))
+                
+        if candidates:
+            # Sort candidates by query token matches descending
+            candidates.sort(key=lambda x: -x[1])
+            best_link, best_score = candidates[0]
+            
+            # If it's a directory listing (many files) and nothing matches the query, don't return a random file!
+            if query_tokens and len(candidates) > 3 and best_score == 0:
+                return {'url': page_url, 'context': page_url, 'title': page_title}
+                
+            return {'url': best_link, 'context': f'{page_url} {page_title} {best_link}', 'title': page_title}
+            
     except Exception as e:
         print(f"Deep scraping failed for {page_url}: {e}")
-    return {'url': page_url, 'context': page_url}
+    return {'url': page_url, 'context': page_url, 'title': ''}
 
 def extract_search_targets(html):
     redirects = re.findall(r'href="([^"]*/RU=[^"]+)"', html)
@@ -406,7 +433,7 @@ def resolve_book_candidate(source_url, requested_title=''):
     if any(ex in domain.lower() for ex in EXCLUDED_DOMAINS):
         return []
 
-    scrape_result = deep_scrape_page(source_url)
+    scrape_result = deep_scrape_page(source_url, requested_title)
     final_link = scrape_result['url']
     candidate_context = f"{source_url} {scrape_result.get('context', '')} {final_link}"
     match_score = score_book_candidate(requested_title or source_url, candidate_context)
@@ -425,6 +452,7 @@ def resolve_book_candidate(source_url, requested_title=''):
         return []
 
     return [{
+        'title': clean_suggestion_title(scrape_result.get('title', ''), final_link),
         'url': final_link,
         'domain': urllib.parse.urlparse(final_link).netloc,
         'format': 'epub' if is_epub else 'pdf'
@@ -494,13 +522,12 @@ def search_books_for_queries(queries, requested_title):
                 
             links = extract_search_targets(html)
             candidates = []
-            
             for link in set(links):
                 domain = urllib.parse.urlparse(link).netloc
                 if any(ex in domain.lower() for ex in EXCLUDED_DOMAINS):
                     continue
                     
-                scrape_result = deep_scrape_page(link)
+                scrape_result = deep_scrape_page(link, requested_title)
                 final_link = scrape_result['url']
                 candidate_context = f"{link} {scrape_result.get('context', '')} {final_link}"
                 match_score = score_book_candidate(requested_title, candidate_context)
@@ -513,6 +540,7 @@ def search_books_for_queries(queries, requested_title):
                 if is_epub or is_pdf:
                     domain_name = urllib.parse.urlparse(final_link).netloc
                     result_item = {
+                        'title': clean_suggestion_title(scrape_result.get('title', ''), final_link),
                         'url': final_link,
                         'domain': domain_name,
                         'format': 'epub' if is_epub else 'pdf',
@@ -522,12 +550,13 @@ def search_books_for_queries(queries, requested_title):
                     if result_item['url'] not in [r['url'] for r in candidates]:
                         if (verify_link(result_item['url']) or is_probably_direct_file(result_item['url'])) and passes_book_quality_gate(result_item['url']):
                             candidates.append(result_item)
-
+ 
             if candidates:
                 candidates.sort(key=lambda item: (item['format'] != 'epub', -item['score']))
                 epub_found = any(item['format'] == 'epub' for item in candidates)
                 final_results = [
                     {
+                        'title': item['title'],
                         'url': item['url'],
                         'domain': item['domain'],
                         'format': item['format']
