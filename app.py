@@ -2,6 +2,7 @@ import os
 import re
 import io
 import zipfile
+import html
 import urllib.request
 import urllib.parse
 from flask import Flask, request, render_template, send_file, jsonify
@@ -279,6 +280,11 @@ EXCLUDED_DOMAINS = [
     'z-lib', 'libgen', 'pdfdrive', 'epubpub', 'tumblr.com', 'linkedin.com'
 ]
 
+SEARCH_ENGINE_DOMAINS = (
+    'search.yahoo.com', 'r.search.yahoo.com', 'duckduckgo.com', 'www.bing.com',
+    'bing.com', 'www.google.com', 'google.com'
+)
+
 BOOK_QUERY_STOPWORDS = {
     've', 'ile', 'bir', 'bu', 'su', 'the', 'book', 'kitap', 'turkce', 'turkçe',
     'pdf', 'epub', 'roman', 'seri'
@@ -297,6 +303,12 @@ def normalize_search_text(text):
 def tokenize_search_text(text):
     return re.findall(r'[a-z0-9]+', normalize_search_text(text))
 
+def extract_query_words(text):
+    return [
+        token for token in tokenize_search_text(text)
+        if not token.isdigit() and len(token) > 1 and token not in BOOK_QUERY_STOPWORDS
+    ]
+
 def score_book_candidate(query, candidate_text):
     query_tokens = tokenize_search_text(query)
     candidate_tokens = tokenize_search_text(candidate_text)
@@ -306,21 +318,30 @@ def score_book_candidate(query, candidate_text):
         return 0
 
     query_numbers = [token for token in query_tokens if token.isdigit()]
-    query_words = [
-        token for token in query_tokens
-        if not token.isdigit() and len(token) > 1 and token not in BOOK_QUERY_STOPWORDS
-    ]
+    query_words = extract_query_words(query)
 
     if query_numbers and not all(number in candidate_token_set for number in query_numbers):
         return -1
 
     matched_words = sum(1 for token in query_words if token in candidate_token_set)
-    minimum_word_matches = 1 if len(query_words) <= 2 else 2
-    if query_words and matched_words < minimum_word_matches:
+    if query_words:
+        required_word_matches = len(query_words) if len(query_words) <= 3 else max(len(query_words) - 1, 3)
+    else:
+        required_word_matches = 0
+
+    if query_words and matched_words < required_word_matches:
         return -1
 
     normalized_query = normalize_search_text(query)
     normalized_candidate = normalize_search_text(candidate_text)
+
+    if len(query_words) >= 2 and normalized_query not in normalized_candidate:
+        consecutive_hits = sum(
+            1 for index in range(len(query_words) - 1)
+            if f"{query_words[index]} {query_words[index + 1]}" in normalized_candidate
+        )
+        if consecutive_hits == 0 and matched_words < len(query_words):
+            return -1
 
     score = 0
     if normalized_query and normalized_query in normalized_candidate:
@@ -336,7 +357,7 @@ def score_book_candidate(query, candidate_text):
 
 def deep_scrape_page(page_url):
     # Avoid scraping direct files or known cloud drives
-    if any(x in page_url for x in ['drive.google.com', 'yadi.sk', 'disk.yandex', 'mega.nz', 'mediafire.com']) or page_url.endswith('.pdf') or page_url.endswith('.epub'):
+    if any(x in page_url for x in ['drive.google.com', 'yadi.sk', 'disk.yandex', 'mega.nz', 'mediafire.com']) or is_probably_direct_file(page_url):
         return {'url': page_url, 'context': page_url}
         
     try:
@@ -357,28 +378,91 @@ def deep_scrape_page(page_url):
             link = link.strip()
             # If we find a cloud drive or direct pdf/epub link, return it!
             if any(x in link for x in ['drive.google.com/file/d/', 'yadi.sk', 'disk.yandex', 'mediafire.com', 'mega.nz']):
-                return {'url': link, 'context': f'{page_url} {page_title} {link}'}
-            if link.endswith('.pdf') or link.endswith('.epub'):
+                return {'url': link, 'context': f'{page_url} {page_title} {link}', 'title': page_title}
+            if is_probably_direct_file(link):
                 if link.startswith('/'):
                     parsed_base = urllib.parse.urlparse(page_url)
                     link = f"{parsed_base.scheme}://{parsed_base.netloc}{link}"
-                return {'url': link, 'context': f'{page_url} {page_title} {link}'}
+                return {'url': link, 'context': f'{page_url} {page_title} {link}', 'title': page_title}
     except Exception as e:
         print(f"Deep scraping failed for {page_url}: {e}")
-    return {'url': page_url, 'context': page_url}
+    return {'url': page_url, 'context': page_url, 'title': ''}
 
-def extract_search_targets(html):
-    redirects = re.findall(r'href="([^"]*/RU=[^"]+)"', html)
+def normalize_search_result_url(raw_url):
+    raw_url = html.unescape((raw_url or '').strip())
+    if not raw_url:
+        return ''
+
+    if raw_url.startswith('//'):
+        raw_url = 'https:' + raw_url
+
+    if raw_url.startswith('/'):
+        if raw_url.startswith('/RU='):
+            return ''
+        if raw_url.startswith('/l/?uddg='):
+            parsed = urllib.parse.urlparse('https://duckduckgo.com' + raw_url)
+            uddg = urllib.parse.parse_qs(parsed.query).get('uddg', [''])[0]
+            return urllib.parse.unquote(uddg)
+        return ''
+
+    parsed = urllib.parse.urlparse(raw_url)
+    host = parsed.netloc.lower()
+
+    if 'yahoo.com' in host:
+        match = re.search(r'/RU=([^/]+)', raw_url)
+        if match:
+            return urllib.parse.unquote(match.group(1))
+
+    if 'duckduckgo.com' in host:
+        uddg = urllib.parse.parse_qs(parsed.query).get('uddg', [''])[0]
+        if uddg:
+            return urllib.parse.unquote(uddg)
+
+    return raw_url
+
+def extract_search_targets(page_html):
+    redirects = re.findall(r'href="([^"]+)"', page_html)
     links = []
     for redirect_url in redirects:
-        match = re.search(r'/RU=([^/]+)', redirect_url)
-        if not match:
+        target = normalize_search_result_url(redirect_url)
+        if not target:
             continue
-        target = urllib.parse.unquote(match.group(1))
-        if 'yahoo' in target or 'yimg' in target:
+
+        parsed = urllib.parse.urlparse(target)
+        if parsed.scheme not in ('http', 'https'):
+            continue
+        host = parsed.netloc.lower()
+        if not host or any(engine_host in host for engine_host in SEARCH_ENGINE_DOMAINS):
+            continue
+        if 'yimg' in host:
+            continue
+        if target.startswith('javascript:') or target.startswith('mailto:'):
             continue
         links.append(target)
     return list(dict.fromkeys(links))
+
+def fetch_search_result_targets(query):
+    search_urls = [
+        "https://search.yahoo.com/search?p=" + urllib.parse.quote(query),
+        "https://www.bing.com/search?q=" + urllib.parse.quote(query)
+    ]
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+
+    for search_url in search_urls:
+        try:
+            req = urllib.request.Request(search_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=8.0) as resp:
+                page_html = resp.read().decode('utf-8', errors='ignore')
+            targets = extract_search_targets(page_html)
+            if targets:
+                return targets
+        except Exception as e:
+            print(f"Search fetch failed for {search_url}: {e}")
+
+    return []
 
 def titleize_slug_text(text):
     words = [word for word in re.split(r'\s+', text.strip()) if word]
@@ -407,6 +491,9 @@ def clean_suggestion_title(page_title, fallback_url):
     slug = re.sub(r'\.(html|htm|php|aspx?)$', '', slug, flags=re.IGNORECASE)
     slug = slug.replace('-', ' ').replace('_', ' ').strip()
     return titleize_slug_text(slug) if slug else parsed.netloc
+
+def build_candidate_title(scrape_result, fallback_url):
+    return clean_suggestion_title(scrape_result.get('title', ''), fallback_url)
 
 def resolve_book_candidate(source_url, requested_title=''):
     source_url = (source_url or '').strip()
@@ -438,7 +525,8 @@ def resolve_book_candidate(source_url, requested_title=''):
     return [{
         'url': final_link,
         'domain': urllib.parse.urlparse(final_link).netloc,
-        'format': 'epub' if is_epub else 'pdf'
+        'format': 'epub' if is_epub else 'pdf',
+        'title': build_candidate_title(scrape_result, final_link)
     }]
 
 def fetch_book_suggestions(query, limit=5):
@@ -446,18 +534,10 @@ def fetch_book_suggestions(query, limit=5):
     if len(query) < 2:
         return []
 
-    search_url = "https://search.yahoo.com/search?p=" + urllib.parse.quote(f"{query} kitap epub pdf")
     suggestions = []
 
     try:
-        req = urllib.request.Request(
-            search_url,
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-        )
-        with urllib.request.urlopen(req, timeout=8.0) as resp:
-            html = resp.read().decode('utf-8', errors='ignore')
-
-        for link in extract_search_targets(html)[:10]:
+        for link in fetch_search_result_targets(f"{query} kitap epub pdf")[:12]:
             domain = urllib.parse.urlparse(link).netloc
             if any(ex in domain.lower() for ex in EXCLUDED_DOMAINS):
                 continue
@@ -507,18 +587,10 @@ def build_book_queries(title, author=None):
 
 def search_books_for_queries(queries, requested_title):
     for query in queries:
-        url = "https://search.yahoo.com/search?p=" + urllib.parse.quote(query)
-        print(f"DEBUG SEARCH - Querying Yahoo: {query}")
+        print(f"DEBUG SEARCH - Querying search providers: {query}")
         
         try:
-            req = urllib.request.Request(
-                url,
-                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-            )
-            with urllib.request.urlopen(req) as resp:
-                html = resp.read().decode('utf-8', errors='ignore')
-                
-            links = extract_search_targets(html)
+            links = fetch_search_result_targets(query)
             candidates = []
             
             for link in set(links):
@@ -528,7 +600,8 @@ def search_books_for_queries(queries, requested_title):
                     
                 scrape_result = deep_scrape_page(link)
                 final_link = scrape_result['url']
-                candidate_context = f"{link} {scrape_result.get('context', '')} {final_link}"
+                candidate_title = build_candidate_title(scrape_result, final_link)
+                candidate_context = f"{link} {scrape_result.get('context', '')} {candidate_title} {final_link}"
                 match_score = score_book_candidate(requested_title, candidate_context)
                 if match_score < 0:
                     continue
@@ -542,7 +615,8 @@ def search_books_for_queries(queries, requested_title):
                         'url': final_link,
                         'domain': domain_name,
                         'format': 'epub' if is_epub else 'pdf',
-                        'score': match_score
+                        'score': match_score,
+                        'title': candidate_title
                     }
                     
                     if result_item['url'] not in [r['url'] for r in candidates]:
@@ -556,7 +630,8 @@ def search_books_for_queries(queries, requested_title):
                     {
                         'url': item['url'],
                         'domain': item['domain'],
-                        'format': item['format']
+                        'format': item['format'],
+                        'title': item.get('title', '')
                     }
                     for item in candidates[:5]
                 ]

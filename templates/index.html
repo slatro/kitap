@@ -110,6 +110,7 @@
                     <div class="found-source-box">
                         <span class="found-badge">İndirme Kaynağı Seçildi</span>
                         <div class="source-info">
+                            <p class="source-book-title" id="selected-book-title">Kitap adı burada görünecek</p>
                             <p class="source-label">Hedef Bağlantı:</p>
                             <a href="#" target="_blank" class="source-link" id="verified-link">http://example.com</a>
                         </div>
@@ -157,6 +158,7 @@
             let activeSubTab = 'manga-search'; // 'manga-search' or 'manga-link'
             let selectedUrl = '';
             let selectedBookFormat = '';
+            let selectedBookTitle = '';
             
             // Elements
             const tabBtns = document.querySelectorAll('.tab-btn');
@@ -166,6 +168,7 @@
             
             const verificationArea = document.getElementById('verification-area');
             const verifiedLink = document.getElementById('verified-link');
+            const selectedBookTitleLabel = document.getElementById('selected-book-title');
             const downloadBtn = document.getElementById('download-btn');
             const mangaFormatsGroup = document.getElementById('manga-formats-group');
             const bookResultsArea = document.getElementById('book-results-area');
@@ -273,6 +276,8 @@
                 statusBox.style.display = 'none';
                 emptyShelf.style.display = 'flex';
                 selectedUrl = '';
+                selectedBookTitle = '';
+                selectedBookTitleLabel.textContent = 'Kitap adı burada görünecek';
                 shelfStatus.textContent = 'Hazır';
             }
 
@@ -336,6 +341,7 @@
                     const resultCard = document.createElement('div');
                     resultCard.className = `result-item-card ${index === 0 ? 'selected' : ''}`;
                     resultCard.innerHTML = `
+                        <div class="result-book-title">${item.title || 'Bulunan Kaynak'}</div>
                         <div class="result-meta">
                             <span class="result-format-badge">${item.format.toUpperCase()}</span>
                             <span class="result-domain">${item.domain}</span>
@@ -346,13 +352,13 @@
                     resultCard.addEventListener('click', () => {
                         document.querySelectorAll('.result-item-card').forEach(c => c.classList.remove('selected'));
                         resultCard.classList.add('selected');
-                        selectBook(item.url, item.format);
+                        selectBook(item.url, item.format, item.title || '');
                     });
                     
                     resultsList.appendChild(resultCard);
                 });
                 
-                selectBook(res.results[0].url, res.results[0].format);
+                selectBook(res.results[0].url, res.results[0].format, res.results[0].title || '');
                 bookResultsArea.style.display = 'block';
                 mangaFormatsGroup.style.display = 'block';
                 verificationArea.style.display = 'block';
@@ -367,7 +373,8 @@
                     results: [{
                         url: item.url,
                         domain: item.domain,
-                        format: guessFormatFromUrl(item.url)
+                        format: guessFormatFromUrl(item.url),
+                        title: item.title || ''
                     }]
                 });
                 showStatus('processing', 'Secilen Kaynak Aciliyor', 'Kaynak aninda yerlestirildi, dosya kontrol ediliyor...');
@@ -591,11 +598,13 @@
                 }
             }
             
-            function selectBook(url, format) {
+            function selectBook(url, format, title = '') {
                 selectedUrl = url;
                 selectedBookFormat = format;
+                selectedBookTitle = title || document.getElementById('book-title').value.trim() || 'Bulunan Kaynak';
                 verifiedLink.href = url;
                 verifiedLink.textContent = url;
+                selectedBookTitleLabel.textContent = selectedBookTitle;
             }
             
             // Downloader Logic
