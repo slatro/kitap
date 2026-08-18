@@ -435,50 +435,34 @@ def fetch_book_suggestions(query, limit=5):
     if len(query) < 2:
         return []
 
-    search_url = "https://search.yahoo.com/search?p=" + urllib.parse.quote(f"{query} kitap epub pdf")
-    suggestions = []
-
+    url = "https://suggestqueries.google.com/complete/search?client=firefox&q=" + urllib.parse.quote(query)
     try:
         req = urllib.request.Request(
-            search_url,
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+            url,
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         )
-        with urllib.request.urlopen(req, timeout=8.0) as resp:
-            html = resp.read().decode('utf-8', errors='ignore')
-
-        for link in extract_search_targets(html)[:10]:
-            domain = urllib.parse.urlparse(link).netloc
-            if any(ex in domain.lower() for ex in EXCLUDED_DOMAINS):
-                continue
-
-            suggestion_title = clean_suggestion_title('', link)
-            score = score_book_candidate(query, f"{suggestion_title} {link}")
-            if score < 0:
-                continue
-
-            suggestions.append({
-                'title': suggestion_title,
-                'domain': domain,
-                'url': link,
-                'score': score
-            })
-
-        suggestions.sort(key=lambda item: -item['score'])
-        deduped = []
-        seen_titles = set()
-        for item in suggestions:
-            key = normalize_search_text(item['title'])
-            if key in seen_titles:
-                continue
-            seen_titles.add(key)
-            deduped.append({
-                'title': item['title'],
-                'domain': item['domain'],
-                'url': item['url']
-            })
-            if len(deduped) == limit:
-                break
-        return deduped
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            import json
+            data = json.loads(resp.read().decode('utf-8'))
+            
+        suggestions = []
+        if isinstance(data, list) and len(data) > 1:
+            raw_suggestions = data[1]
+            for s in raw_suggestions:
+                # Clean suggestion: remove common search suffixes
+                s_clean = re.sub(r'\b(pdf|epub|indir|oku|kitap|pdf oku|epub indir)\b', '', s, flags=re.IGNORECASE).strip()
+                s_clean = re.sub(r'\s+', ' ', s_clean)
+                s_clean = titleize_slug_text(s_clean)
+                
+                if s_clean and s_clean not in [x['title'] for x in suggestions]:
+                    suggestions.append({
+                        'title': s_clean,
+                        'domain': 'Google Öneri',
+                        'url': ''
+                    })
+                    if len(suggestions) >= limit:
+                        break
+        return suggestions
     except Exception as e:
         print(f"Book suggestion error for query '{query}': {e}")
         return []

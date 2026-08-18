@@ -362,6 +362,12 @@
                 hideBookSuggestions();
                 bookTitleInput.value = item.title;
                 resetVerification();
+                
+                if (!item.url) {
+                    triggerBookSearch(item.title);
+                    return;
+                }
+                
                 emptyShelf.style.display = 'none';
                 renderBookSearchResults({
                     results: [{
@@ -531,7 +537,7 @@
                 clearTimeout(suggestionTimeout);
                 suggestionTimeout = setTimeout(() => {
                     renderBookSuggestions(bookTitleInput.value.trim());
-                }, 60);
+                }, 300);
             });
 
             bookTitleInput.addEventListener('focus', () => {
