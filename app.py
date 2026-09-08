@@ -7,6 +7,7 @@ import urllib.request
 import urllib.parse
 from flask import Flask, request, render_template, send_file, jsonify
 from PIL import Image
+import library
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 app.config['TEMPLATES_AUTO_RELOAD'] = True
@@ -145,12 +146,18 @@ def search_mangadex(manga_name, chapter_num):
         if not data.get('data'):
             return None
         
-        manga_id = data['data'][0]['id']
-        manga_title = list(data['data'][0]['attributes']['title'].values())[0]
+        exact = next((item for item in data['data'] if any(
+            library.normalized(manga_name) == library.normalized(value)
+            for names in [item['attributes']['title']] + item['attributes'].get('altTitles', [])
+            for value in names.values())), None)
+        if not exact:
+            return None
+        manga_id = exact['id']
+        manga_title = list(exact['attributes']['title'].values())[0]
         
         # Get Turkish chapters
         feed_url = (f"https://api.mangadex.org/manga/{manga_id}/feed"
-                    f"?translatedLanguage[]=tr&limit=100&order[chapter]=asc")
+                    f"?translatedLanguage[]=tr&limit=100&chapter={urllib.parse.quote(str(chapter_num))}&order[chapter]=asc")
         feed_resp = cf_requests.get(feed_url, impersonate='chrome120', timeout=10)
         if feed_resp.status_code != 200:
             return None
@@ -661,16 +668,7 @@ def search_books(title, author=None):
     return {'results': [], 'epub_not_found': True}
 
 def extract_image_urls(url):
-    blocked_reason = get_blocked_manga_reason(url)
-    if blocked_reason:
-        raise ValueError(blocked_reason)
-
-    req = urllib.request.Request(
-        url, 
-        headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-    )
-    with urllib.request.urlopen(req) as response:
-        html = response.read().decode('utf-8')
+    html = library.read_url(url, limit=4 * 1024 * 1024).decode('utf-8', errors='replace')
         
     if 'mangadenizi.net' in url:
         raw_urls = re.findall(r'(https?:\\u002F\\u002Fimg\.mangadenizi\.net\\u002Freader-images\\[^"]+)', html)
@@ -680,8 +678,7 @@ def extract_image_urls(url):
         if chapter_match:
             chap_num = chapter_match.group(1)
             img_urls = [u for u in img_urls if f'/{chap_num}/' in u]
-        img_urls = list(set(img_urls))
-        img_urls.sort()
+        img_urls = list(dict.fromkeys(img_urls))
         return img_urls
 
     img_urls = re.findall(r'class="wp-manga-chapter-img"[^>]*src="\s*([^"]+)\s*"', html)
@@ -690,8 +687,12 @@ def extract_image_urls(url):
     if not img_urls:
         img_urls = re.findall(r'src="\s*(https://tortugaceviri\.com/wp-content/uploads/WP-manga/data/[^"]+)\s*"', html)
         
+    if not img_urls:
+        parser = library.ReaderImages(url)
+        parser.feed(html)
+        img_urls = parser.images
     seen = set()
-    img_urls = [x.strip() for x in img_urls if not (x.strip() in seen or seen.add(x.strip()))]
+    img_urls = [urllib.parse.urljoin(url, x.strip()) for x in img_urls if not (x.strip() in seen or seen.add(x.strip()))]
     return img_urls
 
 @app.route('/')
@@ -752,7 +753,7 @@ def search_endpoint():
         if not book_title:
             return jsonify({'error': 'Kitap adı gereklidir.'}), 400
             
-        search_res = search_books(book_title, book_author)
+        search_res = library.search(book_title, fetch_search_result_targets)
         results = search_res.get('results', [])
         epub_not_found = search_res.get('epub_not_found', True)
         if results:
@@ -762,7 +763,8 @@ def search_endpoint():
                 'epub_not_found': epub_not_found
             })
         else:
-            return jsonify({'error': 'Arama kriterlerine uygun e-kitap bulunamadı.'}), 404
+            return jsonify(dict(search_res, success=True,
+                message='Bu başlık için doğrulanmış indirilebilir dosya bulunamadı. Katalog kaydı dosya erişimi anlamına gelmez.'))
             
     return jsonify({'error': 'Geçersiz arama modu.'}), 400
 
@@ -770,25 +772,31 @@ def search_endpoint():
 def suggest_books_endpoint():
     data = request.get_json() or {}
     query = data.get('query', '')
-    return jsonify({
-        'success': True,
-        'results': fetch_book_suggestions(query)
-    })
+    if not isinstance(query, str) or len(query.strip()) < 2:
+        return jsonify(success=True, results=[])
+    rows, warnings = library.catalog(query)
+    return jsonify(success=True, results=rows, warnings=warnings)
 
 @app.route('/resolve-book', methods=['POST'])
 def resolve_book_endpoint():
     data = request.get_json() or {}
     source_url = data.get('url', '')
     requested_title = data.get('title', '')
-    results = resolve_book_candidate(source_url, requested_title)
+    try:
+        results = library.resolve(source_url, requested_title)
+    except Exception:
+        results = []
     if results:
         return jsonify({'success': True, 'results': results})
     return jsonify({'error': 'Secilen kaynak hizli cozumlemede indirilebilir dosyaya donusturulemedi.'}), 404
 
 def convert_pdf_to_epub(pdf_bytes, title="Untitled", author="Unknown"):
     try:
+        title, author = html.escape(title), html.escape(author)
         from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(pdf_bytes))
+        if not any((page.extract_text() or '').strip() for page in reader.pages[:5]):
+            return None
         epub_io = io.BytesIO()
         
         with zipfile.ZipFile(epub_io, 'w', zipfile.ZIP_DEFLATED) as epub:
@@ -891,6 +899,8 @@ def convert():
     # Book Download & Package Flow
     if mode == 'book':
         try:
+            if output_format not in ('pdf', 'epub'):
+                return jsonify(error='Geçersiz kitap biçimi.'), 400
             download_url = url
             # If Google Drive, convert to direct download url
             if 'drive.google.com' in url:
@@ -899,17 +909,11 @@ def convert():
                     drive_id = drive_match.group(1)
                     download_url = f"https://drive.google.com/uc?export=download&id={drive_id}"
             
-            req = urllib.request.Request(
-                download_url, 
-                headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-            )
-            with urllib.request.urlopen(req) as response:
-                file_data = response.read()
-            
-            # Figure out format of source file
-            src_ext = 'pdf'
-            if '.epub' in url.lower():
-                src_ext = 'epub'
+            file_data = library.read_url(download_url)
+            evidence = library.inspect_document(file_data, book_title)
+            src_ext = evidence['format']
+            if src_ext == 'epub' and output_format == 'pdf':
+                return jsonify(error='Bu kaynak EPUB. PDF dönüşümü desteklenmiyor; EPUB seçin.'), 422
                 
             # Perform PDF to EPUB conversion on request
             if src_ext == 'pdf' and output_format == 'epub':
@@ -917,11 +921,11 @@ def convert():
                 if converted_data:
                     file_data = converted_data
                     src_ext = 'epub'
+                else:
+                    return jsonify(error='EPUB dönüşümü tamamlanamadı. Orijinal PDF biçimini seçin.'), 422
                     
             # Name the file
-            filename = url.split('/')[-1]
-            if not filename or '.' not in filename or output_format == 'epub':
-                filename = f"{book_title.replace(' ', '_')}.{src_ext}"
+            filename = f"{slugify(book_title) or 'kitap'}.{src_ext}"
                 
             memory_file = io.BytesIO(file_data)
             mimetype = 'application/pdf' if src_ext == 'pdf' else 'application/epub+zip'
@@ -974,9 +978,11 @@ def convert():
                     except Exception as e:
                         print(f"MangaDex CDN error ({cdn_base}): {e}")
                 if img_data:
+                    with Image.open(io.BytesIO(img_data)) as check:
+                        check.verify()
                     downloaded_images.append((f"page_{idx:03d}.{ext}", img_data))
                 else:
-                    print(f"Skipping page {idx}: all CDNs failed")
+                    return jsonify(error=f'{idx + 1}. sayfa indirilemedi. Eksik bölüm paketlenmedi.'), 502
             
             if not downloaded_images:
                 return jsonify({'error': 'MangaDex görselleri indirilemedi.'}), 500
@@ -1012,12 +1018,6 @@ def convert():
     if not url.startswith('http'):
         return jsonify({'error': 'Lütfen geçerli bir manga linki girin.'}), 400
 
-    blocked_reason = get_blocked_manga_reason(url)
-    if blocked_reason:
-        return jsonify({
-            'error': f'{blocked_reason} Telif ve site korumasini asan bir indirme akisi ekleyemem.'
-        }), 400
-
     try:
         img_urls = extract_image_urls(url)
     except Exception as e:
@@ -1042,8 +1042,9 @@ def convert():
                 img_url,
                 headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
             )
-            with urllib.request.urlopen(img_req) as img_resp:
-                img_data = img_resp.read()
+            img_data = library.read_url(img_url, limit=16 * 1024 * 1024, timeout=10)
+            with Image.open(io.BytesIO(img_data)) as check:
+                check.verify()
                 
             ext = 'jpg'
             if '.png' in img_url.lower():
@@ -1053,7 +1054,7 @@ def convert():
                 
             downloaded_images.append((f"page_{idx:03d}.{ext}", img_data))
         except Exception as e:
-            print(f"Error downloading {img_url}: {e}")
+            return jsonify(error=f'{idx + 1}. sayfa indirilemedi. Eksik bölüm paketlenmedi.'), 502
 
     if not downloaded_images:
         return jsonify({'error': 'Görseller indirilemedi.'}), 500

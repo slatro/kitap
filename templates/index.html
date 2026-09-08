@@ -64,6 +64,12 @@
                             <input type="url" id="manga-url" placeholder="https://tortugaceviri.com/... veya mangadenizi.net/...">
                         </div>
                         <button class="btn action-btn search-btn" id="manga-direct-btn">Doğrula & Devam Et</button>
+                        <div class="form-group" style="margin-top: 24px;">
+                            <label for="local-pages">Cihazındaki manga sayfaları</label>
+                            <input id="local-pages" type="file" accept="image/jpeg,image/png,image/webp" multiple>
+                            <p id="local-cbz-status" aria-live="polite">Görseller cihazında işlenir, sunucuya yüklenmez.</p>
+                            <button class="btn action-btn" id="local-cbz" type="button" disabled>Görsellerden CBZ Oluştur</button>
+                        </div>
                     </div>
                 </div>
                 
@@ -98,7 +104,7 @@
                 <div class="book-results-area" id="book-results-area" style="display: none;">
                     <label class="section-label">Arama Sonuçları (Lütfen Seçin):</label>
                     <p class="search-tip" style="font-size: 0.76rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4; border-left: 2px solid var(--gold); padding-left: 8px;">
-                        💡 <strong>Öneri:</strong> <code>drive.google.com</code> kaynakları doğrudan iner. Diğer siteler güvenlik nedeniyle engellenebilir.
+                        Kitap kaynaklarında dosya biçimi ve başlık kontrol edilir. Katalog kayıtları ayrıca gösterilir.
                     </p>
                     <div class="results-list" id="results-list">
                         <!-- Dynamic results -->
@@ -151,6 +157,7 @@
         </div>
     </div>
     
+    <script src="{{ url_for('static', filename='local-cbz.js') }}" defer></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             // State
@@ -187,7 +194,13 @@
             const formatCards = document.querySelectorAll('.format-card');
             let suggestionTimeout;
             let suggestionRequestId = 0;
+            let searchRequestId = 0;
+            let suggestionController;
+            let searchController;
             const suggestionCache = new Map();
+            const escapeText = value => String(value ?? '').replace(/[&<>"']/g, char =>
+                ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[char]));
+            const safeUrl = value => /^https?:\/\//i.test(value || '') ? escapeText(value) : '#';
             
             // Format card toggle active class
             formatCards.forEach(card => {
@@ -271,6 +284,11 @@
             }
             
             function resetVerification() {
+                searchRequestId++;
+                searchController?.abort();
+                suggestionRequestId++;
+                suggestionController?.abort();
+                hideBookSuggestions();
                 verificationArea.style.display = 'none';
                 bookResultsArea.style.display = 'none';
                 statusBox.style.display = 'none';
@@ -303,8 +321,8 @@
                     button.type = 'button';
                     button.className = 'suggestion-item';
                     button.innerHTML = `
-                        <span class="suggestion-book">${item.title}</span>
-                        <span class="suggestion-author">${item.domain}</span>
+                        <span class="suggestion-book">${escapeText(item.title)}</span>
+                        <span class="suggestion-author">${escapeText(item.author || item.domain)}</span>
                     `;
                     button.addEventListener('click', () => {
                         resolveSuggestionChoice(item);
@@ -337,16 +355,29 @@
 
             function renderBookSearchResults(res) {
                 resultsList.innerHTML = '';
+                if (!res.results?.length) {
+                    for (const item of res.catalog || []) {
+                        const card = document.createElement('div');
+                        card.className = 'result-item-card';
+                        card.innerHTML = `<div class="result-book-title">${escapeText(item.title)}</div>
+                            <p>${escapeText(item.author)}</p><p>Katalog kaydı · İndirilebilir dosya doğrulanmadı</p>
+                            <a href="${safeUrl(item.url)}" target="_blank" rel="noopener">Katalogda incele</a>`;
+                        resultsList.appendChild(card);
+                    }
+                    bookResultsArea.style.display = 'block';
+                    verificationArea.style.display = 'none';
+                    return;
+                }
                 res.results.forEach((item, index) => {
                     const resultCard = document.createElement('div');
                     resultCard.className = `result-item-card ${index === 0 ? 'selected' : ''}`;
                     resultCard.innerHTML = `
-                        <div class="result-book-title">${item.title || 'Bulunan Kaynak'}</div>
+                        <div class="result-book-title">${escapeText(item.title || 'Bulunan Kaynak')}</div>
                         <div class="result-meta">
                             <span class="result-format-badge">${item.format.toUpperCase()}</span>
-                            <span class="result-domain">${item.domain}</span>
+                            <span class="result-domain">${escapeText(item.domain)}${item.pages ? ' · ' + Number(item.pages) + ' sayfa' : ''}</span>
                         </div>
-                        <a href="${item.url}" target="_blank" class="result-link-preview">${item.url}</a>
+                        <a href="${safeUrl(item.url)}" target="_blank" rel="noopener" class="result-link-preview">${escapeText(item.url)}</a>
                     `;
                     
                     resultCard.addEventListener('click', () => {
@@ -367,37 +398,7 @@
             async function resolveSuggestionChoice(item) {
                 hideBookSuggestions();
                 bookTitleInput.value = item.title;
-                resetVerification();
-                emptyShelf.style.display = 'none';
-                renderBookSearchResults({
-                    results: [{
-                        url: item.url,
-                        domain: item.domain,
-                        format: guessFormatFromUrl(item.url),
-                        title: item.title || ''
-                    }]
-                });
-                showStatus('processing', 'Secilen Kaynak Aciliyor', 'Kaynak aninda yerlestirildi, dosya kontrol ediliyor...');
-
-                try {
-                    const response = await fetch('/resolve-book', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url: item.url, title: item.title })
-                    });
-                    const res = await response.json();
-
-                    if (response.ok && res.results && res.results.length) {
-                        renderBookSearchResults(res);
-                        showStatus('success', 'Kaynak Hazir', 'Secilen canli sonuc aninda indirilebilir hale getirildi.');
-                        return;
-                    }
-
-                    triggerBookSearch(item.title);
-                } catch (error) {
-                    console.error('Suggestion resolve failed:', error);
-                    triggerBookSearch(item.title);
-                }
+                triggerBookSearch(item.title, item);
             }
 
             function showSuggestionLoading() {
@@ -414,6 +415,8 @@
                 }
 
                 const currentRequestId = ++suggestionRequestId;
+                suggestionController?.abort();
+                suggestionController = new AbortController();
                 const cachedMatches = getCachedSuggestionMatches(query);
                 if (cachedMatches.length) {
                     displaySuggestionMatches(cachedMatches);
@@ -423,6 +426,7 @@
 
                 try {
                     const response = await fetch('/suggest-books', {
+                        signal: suggestionController.signal,
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ query })
@@ -434,14 +438,17 @@
                     }
 
                     const matches = res.results || [];
-                    suggestionCache.set(query.trim().toLowerCase(), matches);
+                    if (matches.length) suggestionCache.set(query.trim().toLowerCase(), matches);
                     if (!matches.length) {
-                        hideBookSuggestions();
+                        bookSuggestionList.textContent = res.warnings?.length ?
+                            'Katalog şu anda yanıt vermiyor. Biraz sonra tekrar deneyin.' : 'Bu yazımla katalog önerisi bulunamadı.';
+                        bookSuggestions.style.display = 'block';
                         return;
                     }
 
                     displaySuggestionMatches(matches);
                 } catch (error) {
+                    if (error.name === 'AbortError' || currentRequestId !== suggestionRequestId) return;
                     hideBookSuggestions();
                     console.error('Suggestion fetch failed:', error);
                 }
@@ -518,12 +525,6 @@
                     return;
                 }
 
-                if (url.includes('sadscans.net')) {
-                    resetVerification();
-                    emptyShelf.style.display = 'none';
-                    showStatus('error', 'Kaynak Engelli', 'sadscans.net anti-bot korumasi kullandigi icin bu uygulama icinden otomatik cekilemiyor.');
-                    return;
-                }
                 
                 resetVerification();
                 emptyShelf.style.display = 'none';
@@ -531,14 +532,16 @@
                 
                 mangaFormatsGroup.style.display = 'block';
                 verificationArea.style.display = 'block';
-                showStatus('success', 'Doğrulandı', 'Kaynak bağlantısı hazır. İndirmeyi başlatabilirsiniz.');
+                showStatus('processing', 'Bağlantı Seçildi', 'Sayfaların erişimi indirme sırasında kontrol edilecek.');
             });
             
             bookTitleInput.addEventListener('input', () => {
                 clearTimeout(suggestionTimeout);
+                resetVerification();
+                if (bookTitleInput.value.trim().length >= 2) showSuggestionLoading();
                 suggestionTimeout = setTimeout(() => {
                     renderBookSuggestions(bookTitleInput.value.trim());
-                }, 60);
+                }, 250);
             });
 
             bookTitleInput.addEventListener('focus', () => {
@@ -571,22 +574,34 @@
                 triggerBookSearch(title);
             });
             
-            async function triggerBookSearch(title) {
+            async function triggerBookSearch(title, catalogItem = null) {
                 hideBookSuggestions();
                 resetVerification();
-                showStatus('processing', 'Aranıyor', 'E-Kitap arşivleri taranıyor...');
+                const requestId = searchRequestId;
+                searchController = new AbortController();
+                const controller = searchController;
+                const timeout = setTimeout(() => controller.abort(), 32000);
+                if (catalogItem) renderBookSearchResults({results: [], catalog: [catalogItem]});
+                showStatus('processing', 'Aranıyor', `${title}: dosya kaynakları ve içerik başlığı kontrol ediliyor...`);
                 emptyShelf.style.display = 'none';
                 
                 try {
                     const response = await fetch('/search', {
+                        signal: controller.signal,
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ mode: 'book', book_title: title, book_author: '' })
                     });
                     const res = await response.json();
+                    if (requestId !== searchRequestId) return;
                     
                     if (!response.ok) throw new Error(res.error || 'Kitap bulunamadı.');
                     renderBookSearchResults(res);
+                    if (!res.results?.length) {
+                        showStatus('processing', res.warnings?.length ? 'Kaynaklara Erişim Sınırlı' : 'Dosya Doğrulanamadı',
+                            res.message + (res.warnings?.length ? ' ' + res.warnings.join(' ') : ''));
+                        return;
+                    }
                     
                     if (res.epub_not_found) {
                         showStatus('success', 'Kitap Bulundu (PDF)', 'Aradığınız kitabın EPUB versiyonu bulunamadı, PDF kaynakları listelendi.');
@@ -594,7 +609,10 @@
                         showStatus('success', 'Kitap Bulundu (EPUB)', 'EPUB formatındaki kaynaklar öncelikli olarak listelendi.');
                     }
                 } catch (err) {
-                    showStatus('error', 'Hata', err.message);
+                    if (requestId !== searchRequestId) return;
+                    showStatus('error', 'Arama Tamamlanamadı', err.name === 'AbortError' ? 'Kaynakların yanıt süresi doldu. Tekrar deneyebilirsiniz.' : err.message);
+                } finally {
+                    clearTimeout(timeout);
                 }
             }
             
@@ -605,6 +623,10 @@
                 verifiedLink.href = url;
                 verifiedLink.textContent = url;
                 selectedBookTitleLabel.textContent = selectedBookTitle;
+                document.querySelectorAll('input[name="format"]').forEach(input => {
+                    input.checked = input.value === format;
+                    input.closest('.format-card').classList.toggle('active', input.checked);
+                });
             }
             
             // Downloader Logic
@@ -629,7 +651,7 @@
                             url: selectedUrl, 
                             format, 
                             mode: currentMode,
-                            title: document.getElementById('book-title').value.trim() || 'Kitap',
+                            title: selectedBookTitle || document.getElementById('book-title').value.trim() || 'Kitap',
                             author: ''
                         })
                     });
