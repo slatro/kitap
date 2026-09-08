@@ -371,6 +371,7 @@
                 res.results.forEach((item, index) => {
                     const resultCard = document.createElement('div');
                     resultCard.className = `result-item-card ${index === 0 ? 'selected' : ''}`;
+                    const displayTitle = item.title || 'E-Kitap Kaynağı';
                     resultCard.innerHTML = `
                         <div class="result-book-title">${escapeText(item.title || 'Bulunan Kaynak')}</div>
                         <div class="result-meta">
